@@ -2091,6 +2091,7 @@ bool RGWUserCaps::is_valid_cap_type(const string& tp)
                                     "user-policy",
                                     "amz-cache",
                                     "oidc-provider",
+                                    "user-info-without-keys",
 				                            "ratelimit"};
 
   for (unsigned int i = 0; i < sizeof(cap_type) / sizeof(char *); ++i) {
@@ -2157,7 +2158,7 @@ int rgw_parse_op_type_list(const string& str, uint32_t *perm)
   return rgw_parse_list_of_flags(op_type_mapping, str, perm);
 }
 
-bool match_policy(std::string_view pattern, std::string_view input,
+bool match_policy(const std::string& pattern, const std::string& input,
                   uint32_t flag)
 {
   const uint32_t flag2 = flag & (MATCH_POLICY_ACTION|MATCH_POLICY_ARN) ?

@@ -21,7 +21,6 @@
 # https://rpm-software-management.github.io/rpm/manual/conditionalbuilds.html
 #################################################################################
 %bcond_with make_check
-%bcond_with zbd
 %bcond_with cmake_verbose_logging
 %bcond_without ceph_test_package
 %ifarch s390
@@ -111,6 +110,11 @@
 # for centos 8, utf8proc-devel comes from the subversion-devel module which isn't available in EPEL8
 # this is tracked in https://bugzilla.redhat.com/2152265
 %bcond_with system_arrow
+%endif
+%if 0%{?fedora} || 0%{?rhel} >= 9
+%bcond_without system_qat
+%else
+%bcond_with system_qat
 %endif
 %if 0%{?fedora} || 0%{?suse_version} || 0%{?rhel} >= 8 || 0%{?openEuler}
 %global weak_deps 1
@@ -213,6 +217,7 @@ BuildRequires:	selinux-policy-devel
 BuildRequires:	gperf
 BuildRequires:  cmake > 3.5
 BuildRequires:	fuse-devel
+BuildRequires:	git
 %if 0%{?fedora} || 0%{?suse_version} > 1500 || 0%{?rhel} == 9 || 0%{?openEuler}
 BuildRequires:	gcc-c++ >= 11
 %endif
@@ -300,9 +305,6 @@ BuildRequires:	socat
 BuildRequires:	python%{python3_pkgversion}-asyncssh
 BuildRequires:	python%{python3_pkgversion}-natsort
 %endif
-%if 0%{with zbd}
-BuildRequires:  libzbd-devel
-%endif
 %if 0%{?suse_version}
 BuildRequires:  libthrift-devel >= 0.13.0
 %else
@@ -335,6 +337,10 @@ BuildRequires:  libarrow-devel
 BuildRequires:  parquet-libs-devel
 BuildRequires:  utf8proc-devel
 %endif
+%if 0%{with system_qat}
+BuildRequires:  qatlib-devel
+BuildRequires:  qatzip-devel
+%endif
 %if 0%{with seastar}
 BuildRequires:  c-ares-devel
 BuildRequires:  gnutls-devel
@@ -345,6 +351,8 @@ BuildRequires:  ragel
 BuildRequires:  systemtap-sdt-devel
 BuildRequires:  libubsan
 BuildRequires:  libasan
+BuildRequires:  protobuf-devel
+BuildRequires:  protobuf-compiler
 %if 0%{?rhel} == 8
 BuildRequires:  %{gts_prefix}-annobin
 BuildRequires:  %{gts_prefix}-annobin-plugin-gcc
@@ -625,12 +633,20 @@ Requires:       ceph-mgr = %{_epoch_prefix}%{version}-%{release}
 Requires:       ceph-grafana-dashboards = %{_epoch_prefix}%{version}-%{release}
 Requires:       ceph-prometheus-alerts = %{_epoch_prefix}%{version}-%{release}
 Requires:       python%{python3_pkgversion}-setuptools
+%if 0%{?fedora} || 0%{?rhel} >= 9
+Requires:       python%{python3_pkgversion}-grpcio
+Requires:       python%{python3_pkgversion}-grpcio-tools
+%endif
 %if 0%{?fedora} || 0%{?rhel} || 0%{?openEuler}
 Requires:       python%{python3_pkgversion}-cherrypy
 Requires:       python%{python3_pkgversion}-routes
 Requires:       python%{python3_pkgversion}-werkzeug
 %if 0%{?weak_deps}
 Recommends:     python%{python3_pkgversion}-saml
+%if 0%{?fedora} || 0%{?rhel} <= 8
+Recommends:     python%{python3_pkgversion}-grpcio
+Recommends:     python%{python3_pkgversion}-grpcio-tools
+%endif
 %endif
 %endif
 %if 0%{?suse_version}
@@ -902,6 +918,7 @@ Requires: parted
 Requires: util-linux
 Requires: xfsprogs
 Requires: python%{python3_pkgversion}-setuptools
+Requires: python%{python3_pkgversion}-packaging
 Requires: python%{python3_pkgversion}-ceph-common = %{_epoch_prefix}%{version}-%{release}
 %description volume
 This package contains a tool to deploy OSD with different devices like
@@ -1296,6 +1313,15 @@ Group:          System/Monitoring
 %description mib
 This package provides a Ceph MIB for SNMP traps.
 
+%package node-proxy
+Summary:        hw monitoring agent for Ceph
+BuildArch:      noarch
+%if 0%{?suse_version}
+Group:          System/Monitoring
+%endif
+%description node-proxy
+This package provides a Ceph hardware monitoring agent.
+
 #################################################################################
 # common
 #################################################################################
@@ -1403,9 +1429,6 @@ cmake .. \
 %if 0%{without lua_packages}
     -DWITH_RADOSGW_LUA_PACKAGES:BOOL=OFF \
 %endif
-%if 0%{with zbd}
-    -DWITH_ZBD:BOOL=ON \
-%endif
 %if 0%{with cmake_verbose_logging}
     -DCMAKE_VERBOSE_MAKEFILE:BOOL=ON \
 %endif
@@ -1432,6 +1455,10 @@ cmake .. \
 %if 0%{with system_arrow}
     -DWITH_SYSTEM_ARROW:BOOL=ON \
     -DWITH_SYSTEM_UTF8PROC:BOOL=ON \
+%endif
+%if 0%{with system_qat}
+    -DWITH_SYSTEM_QATLIB:BOOL=ON \
+    -DWITH_SYSTEM_QATZIP:BOOL=ON \
 %endif
 %if 0%{with seastar}
     -DWITH_SEASTAR:BOOL=ON \
@@ -2637,5 +2664,12 @@ exit 0
 %files mib
 %attr(0755,root,root) %dir %{_datadir}/snmp
 %{_datadir}/snmp/mibs
+
+%files node-proxy
+%{_sbindir}/ceph-node-proxy
+%dir %{python3_sitelib}/ceph_node_proxy
+%{python3_sitelib}/ceph_node_proxy/*
+%{python3_sitelib}/ceph_node_proxy-*
+#%{_mandir}/man8/ceph-node-proxy.8*
 
 %changelog

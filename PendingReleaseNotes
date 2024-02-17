@@ -10,6 +10,9 @@
   For multi-site deployments that make any use of Server-Side Encryption, we
   recommended running this command against every bucket in every zone after all
   zones have upgraded.
+* Tracing: The blkin tracing feature (see https://docs.ceph.com/en/reef/dev/blkin/)
+  is now deprecated in favor of Opentracing (https://docs.ceph.com/en/reef/dev/developer_guide/jaegertracing/)
+  and will be removed in a later release.
 * CEPHFS: MDS evicts clients which are not advancing their request tids which causes
   a large buildup of session metadata resulting in the MDS going read-only due to
   the RADOS operation exceeding the size threshold. `mds_session_metadata_threshold`
@@ -91,6 +94,51 @@ CephFS: Disallow delegating preallocated inode ranges to clients. Config
 * RADOS: `get_pool_is_selfmanaged_snaps_mode` C++ API has been deprecated
   due to being prone to false negative results.  It's safer replacement is
   `pool_is_in_selfmanaged_snaps_mode`.
+* RADOS: For bug 62338 (https://tracker.ceph.com/issues/62338), we did not choose
+  to condition the fix on a server flag in order to simplify backporting.  As
+  a result, in rare cases it may be possible for a PG to flip between two acting
+  sets while an upgrade to a version with the fix is in progress.  If you observe
+  this behavior, you should be able to work around it by completing the upgrade or
+  by disabling async recovery by setting osd_async_recovery_min_cost to a very
+  large value on all OSDs until the upgrade is complete:
+  ``ceph config set osd osd_async_recovery_min_cost 1099511627776``
+* RADOS: A detailed version of the `balancer status` CLI command in the balancer
+  module is now available. Users may run `ceph balancer status detail` to see more
+  details about which PGs were updated in the balancer's last optimization.
+  See https://docs.ceph.com/en/latest/rados/operations/balancer/ for more information.
+* CephFS: Full support for subvolumes and subvolume groups is now available
+  for snap_schedule Manager module.
+* RBD: When diffing against the beginning of time (`fromsnapname == NULL`) in
+  fast-diff mode (`whole_object == true` with `fast-diff` image feature enabled
+  and valid), diff-iterate is now guaranteed to execute locally if exclusive
+  lock is available.  This brings a dramatic performance improvement for QEMU
+  live disk synchronization and backup use cases.
+* RBD: The ``try-netlink`` mapping option for rbd-nbd has become the default
+  and is now deprecated. If the NBD netlink interface is not supported by the
+  kernel, then the mapping is retried using the legacy ioctl interface.
+* RADOS: Read balancing may now be managed automatically via the balancer
+  manager module. Users may choose between two new modes: ``upmap-read``, which
+  offers upmap and read optimization simultaneously, or ``read``, which may be used
+  to only optimize reads. For more detailed information see https://docs.ceph.com/en/latest/rados/operations/read-balancer/#online-optimization.
+* CephFS: MDS log trimming is now driven by a separate thread which tries to
+  trim the log every second (`mds_log_trim_upkeep_interval` config). Also,
+  a couple of configs govern how much time the MDS spends in trimming its
+  logs. These configs are `mds_log_trim_threshold` and `mds_log_trim_decay_rate`.
+* RGW: Notification topics are now owned by the user that created them. 
+  By default, only the owner can read/write their topics. Topic policy documents
+  are now supported to grant these permissions to other users. Preexisting topics
+  are treated as if they have no owner, and any user can read/write them using the SNS API. 
+  If such a topic is recreated with CreateTopic, the issuing user becomes the new owner.
+  For backward compatibility, all users still have permission to publish bucket 
+  notifications to topics owned by other users. A new configuration parameter:
+  ``rgw_topic_require_publish_policy`` can be enabled to deny ``sns:Publish``
+  permissions unless explicitly granted by topic policy.
+* RBD: The option ``--image-id`` has been added to `rbd children` CLI command,
+  so it can be run for images in the trash.
+* PG dump: The default output of `ceph pg dump --format json` has changed. The
+  default json format produces a rather massive output in large clusters and
+  isn't scalable. So we have removed the 'network_ping_times' section from
+  the output. Details in the tracker: https://tracker.ceph.com/issues/57460
 
 >=18.0.0
 

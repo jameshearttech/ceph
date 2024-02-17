@@ -392,6 +392,7 @@ if(WITH_SEASTAR)
   # create the directory so cmake won't complain when looking at the imported
   # target: Seastar exports this directory created at build-time
   file(MAKE_DIRECTORY "${CMAKE_CURRENT_BINARY_DIR}/seastar/gen/include")
+  file(MAKE_DIRECTORY "${CMAKE_CURRENT_BINARY_DIR}/seastar/gen/src")
   add_subdirectory(crimson)
 endif()
 
@@ -502,10 +503,6 @@ endif()
 
 if(NOT WITH_SYSTEM_BOOST)
   list(APPEND ceph_common_deps ${ZLIB_LIBRARIES})
-endif()
-
-if(HAVE_QATZIP)
-  list(APPEND ceph_common_deps ${qatzip_LIBRARIES})
 endif()
 
 if(WITH_DPDK)
@@ -662,6 +659,7 @@ endif()
 if(NOT WIN32)
 add_subdirectory(pybind)
 add_subdirectory(ceph-volume)
+add_subdirectory(ceph-node-proxy)
 add_subdirectory(python-common)
 add_subdirectory(cephadm)
 endif(NOT WIN32)

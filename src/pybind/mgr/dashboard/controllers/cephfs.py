@@ -1,9 +1,11 @@
 # -*- coding: utf-8 -*-
+# pylint: disable=too-many-lines
+import errno
 import json
 import logging
 import os
 from collections import defaultdict
-from typing import Any, Dict
+from typing import Any, Dict, List
 
 import cephfs
 import cherrypy
@@ -693,11 +695,17 @@ class CephFSSubvolume(RESTController):
                 params['sub_name'] = subvolume['name']
                 error_code, out, err = mgr.remote('volumes', '_cmd_fs_subvolume_info', None,
                                                   params)
-                if error_code != 0:
+                # just ignore this error for now so the subvolumes page will load.
+                # the ideal solution is to implement a status page where clone status
+                # can be displayed
+                if error_code == -errno.EAGAIN:
+                    pass
+                elif error_code != 0:
                     raise DashboardException(
                         f'Failed to get info for subvolume {subvolume["name"]}: {err}'
                     )
-                subvolume['info'] = json.loads(out)
+                if out:
+                    subvolume['info'] = json.loads(out)
         return subvolumes
 
     @RESTController.Resource('GET')
@@ -857,33 +865,101 @@ class CephFSSubvolumeSnapshots(RESTController):
                 params['snap_name'] = snapshot['name']
                 error_code, out, err = mgr.remote('volumes', '_cmd_fs_subvolume_snapshot_info',
                                                   None, params)
-                if error_code != 0:
+                # just ignore this error for now so the subvolumes page will load.
+                # the ideal solution is to implement a status page where clone status
+                # can be displayed
+                if error_code == -errno.EAGAIN:
+                    pass
+                elif error_code != 0:
                     raise DashboardException(
                         f'Failed to get info for subvolume snapshot {snapshot["name"]}: {err}'
                     )
-                snapshot['info'] = json.loads(out)
+                if out:
+                    snapshot['info'] = json.loads(out)
         return snapshots
 
+    @RESTController.Resource('GET')
+    def info(self, vol_name: str, subvol_name: str, snap_name: str, group_name: str = ''):
+        params = {'vol_name': vol_name, 'sub_name': subvol_name, 'snap_name': snap_name}
+        if group_name:
+            params['group_name'] = group_name
+        error_code, out, err = mgr.remote('volumes', '_cmd_fs_subvolume_snapshot_info', None,
+                                          params)
+        if error_code != 0:
+            raise DashboardException(
+                f'Failed to get info for subvolume snapshot {snap_name}: {err}'
+            )
+        return json.loads(out)
 
-@APIRouter('/cephfs/snaphost/schedule', Scope.CEPHFS)
+    def create(self, vol_name: str, subvol_name: str, snap_name: str, group_name=''):
+        params = {'vol_name': vol_name, 'sub_name': subvol_name, 'snap_name': snap_name}
+        if group_name:
+            params['group_name'] = group_name
+
+        error_code, _, err = mgr.remote('volumes', '_cmd_fs_subvolume_snapshot_create', None,
+                                        params)
+
+        if error_code != 0:
+            raise DashboardException(
+                f'Failed to create subvolume snapshot {snap_name}: {err}'
+            )
+        return f'Subvolume snapshot {snap_name} created successfully'
+
+    def delete(self, vol_name: str, subvol_name: str, snap_name: str, group_name='', force=True):
+        params = {'vol_name': vol_name, 'sub_name': subvol_name, 'snap_name': snap_name}
+        if group_name:
+            params['group_name'] = group_name
+        params['force'] = str_to_bool(force)
+        error_code, _, err = mgr.remote('volumes', '_cmd_fs_subvolume_snapshot_rm', None,
+                                        params)
+        if error_code != 0:
+            raise DashboardException(
+                f'Failed to delete subvolume snapshot {snap_name}: {err}'
+            )
+        return f'Subvolume snapshot {snap_name} removed successfully'
+
+
+@APIRouter('/cephfs/subvolume/snapshot/clone', Scope.CEPHFS)
+@APIDoc("Cephfs Snapshot Clone Management API", "CephfsSnapshotClone")
+class CephFsSnapshotClone(RESTController):
+    @EndpointDoc("Create a clone of a subvolume snapshot")
+    def create(self, vol_name: str, subvol_name: str, snap_name: str, clone_name: str,
+               group_name='', target_group_name=''):
+        params = {'vol_name': vol_name, 'sub_name': subvol_name, 'snap_name': snap_name,
+                  'target_sub_name': clone_name}
+        if group_name:
+            params['group_name'] = group_name
+
+        if target_group_name:
+            params['target_group_name'] = target_group_name
+
+        error_code, _, err = mgr.remote('volumes', '_cmd_fs_subvolume_snapshot_clone', None,
+                                        params)
+        if error_code != 0:
+            raise DashboardException(
+                f'Failed to create clone {clone_name}: {err}'
+            )
+        return f'Clone {clone_name} created successfully'
+
+
+@APIRouter('/cephfs/snapshot/schedule', Scope.CEPHFS)
 @APIDoc("Cephfs Snapshot Scheduling API", "CephFSSnapshotSchedule")
 class CephFSSnapshotSchedule(RESTController):
 
     def list(self, fs: str, path: str = '/', recursive: bool = True):
         error_code, out, err = mgr.remote('snap_schedule', 'snap_schedule_list',
-                                          path, recursive, fs, 'plain')
-
+                                          path, recursive, fs, None, None, 'plain')
         if len(out) == 0:
             return []
 
         snapshot_schedule_list = out.split('\n')
-        output = []
+        output: List[Any] = []
 
         for snap in snapshot_schedule_list:
             current_path = snap.strip().split(' ')[0]
             error_code, status_out, err = mgr.remote('snap_schedule', 'snap_schedule_get',
-                                                     current_path, fs, 'plain')
-            output.append(json.loads(status_out))
+                                                     current_path, fs, None, None, 'json')
+            output = output + json.loads(status_out)
 
         output_json = json.dumps(output)
 
@@ -891,5 +967,117 @@ class CephFSSnapshotSchedule(RESTController):
             raise DashboardException(
                 f'Failed to get list of snapshot schedules for path {path}: {err}'
             )
-
         return json.loads(output_json)
+
+    def create(self, fs: str, path: str, snap_schedule: str, start: str, retention_policy=None,
+               subvol=None, group=None):
+        error_code, _, err = mgr.remote('snap_schedule',
+                                        'snap_schedule_add',
+                                        path,
+                                        snap_schedule,
+                                        start,
+                                        fs,
+                                        subvol,
+                                        group)
+
+        if retention_policy:
+            retention_policies = retention_policy.split('|')
+            for retention in retention_policies:
+                retention_count = retention.split('-')[0]
+                retention_spec_or_period = retention.split('-')[1]
+                error_code_retention, _, err_retention = mgr.remote('snap_schedule',
+                                                                    'snap_schedule_retention_add',
+                                                                    path,
+                                                                    retention_spec_or_period,
+                                                                    retention_count,
+                                                                    fs)
+                if error_code_retention != 0:
+                    raise DashboardException(
+                        f'Failed to add retention policy for path {path}: {err_retention}'
+                    )
+        if error_code != 0:
+            raise DashboardException(
+                f'Failed to create snapshot schedule for path {path}: {err}'
+            )
+
+        return f'Snapshot schedule for path {path} created successfully'
+
+    def set(self, fs: str, path: str, retention_to_add=None, retention_to_remove=None,
+            subvol=None, group=None):
+        def editRetentionPolicies(method, retention_policy):
+            if not retention_policy:
+                return
+
+            retention_policies = retention_policy.split('|')
+            for retention in retention_policies:
+                retention_count = retention.split('-')[0]
+                retention_spec_or_period = retention.split('-')[1]
+                error_code_retention, _, err_retention = mgr.remote('snap_schedule',
+                                                                    method,
+                                                                    path,
+                                                                    retention_spec_or_period,
+                                                                    retention_count,
+                                                                    fs,
+                                                                    subvol,
+                                                                    group)
+                if error_code_retention != 0:
+                    raise DashboardException(
+                        f'Failed to add/remove retention policy for path {path}: {err_retention}'
+                    )
+
+        editRetentionPolicies('snap_schedule_retention_rm', retention_to_remove)
+        editRetentionPolicies('snap_schedule_retention_add', retention_to_add)
+
+        return f'Retention policies for snapshot schedule on path {path} updated successfully'
+
+    @RESTController.Resource('DELETE')
+    def delete_snapshot(self, fs: str, path: str, schedule: str, start: str,
+                        subvol=None, group=None):
+        error_code, _, err = mgr.remote('snap_schedule',
+                                        'snap_schedule_rm',
+                                        path,
+                                        schedule,
+                                        start,
+                                        fs,
+                                        subvol,
+                                        group)
+        if error_code != 0:
+            raise DashboardException(
+                f'Failed to delete snapshot schedule for path {path}: {err}'
+            )
+
+        return f'Snapshot schedule for path {path} deleted successfully'
+
+    @RESTController.Resource('POST')
+    def deactivate(self, fs: str, path: str, schedule: str, start: str, subvol=None, group=None):
+        error_code, _, err = mgr.remote('snap_schedule',
+                                        'snap_schedule_deactivate',
+                                        path,
+                                        schedule,
+                                        start,
+                                        fs,
+                                        subvol,
+                                        group)
+        if error_code != 0:
+            raise DashboardException(
+                f'Failed to deactivate snapshot schedule for path {path}: {err}'
+            )
+
+        return f'Snapshot schedule for path {path} deactivated successfully'
+
+    @RESTController.Resource('POST')
+    def activate(self, fs: str, path: str, schedule: str, start: str, subvol=None, group=None):
+        error_code, _, err = mgr.remote('snap_schedule',
+                                        'snap_schedule_activate',
+                                        path,
+                                        schedule,
+                                        start,
+                                        fs,
+                                        subvol,
+                                        group)
+        if error_code != 0:
+            raise DashboardException(
+                f'Failed to activate snapshot schedule for path {path}: {err}'
+            )
+
+        return f'Snapshot schedule for path {path} activated successfully'

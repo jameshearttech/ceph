@@ -3,8 +3,14 @@ import { NgModule } from '@angular/core';
 import { FormsModule, ReactiveFormsModule } from '@angular/forms';
 
 import { TreeModule } from '@circlon/angular-tree-component';
-import { NgbNavModule, NgbTooltipModule, NgbTypeaheadModule } from '@ng-bootstrap/ng-bootstrap';
-import { ChartsModule } from 'ng2-charts';
+import {
+  NgbDatepickerModule,
+  NgbNavModule,
+  NgbTimepickerModule,
+  NgbTooltipModule,
+  NgbTypeaheadModule
+} from '@ng-bootstrap/ng-bootstrap';
+import { NgChartsModule } from 'ng2-charts';
 
 import { AppRoutingModule } from '~/app/app-routing.module';
 import { SharedModule } from '~/app/shared/shared.module';
@@ -22,20 +28,26 @@ import { CephfsSubvolumegroupFormComponent } from './cephfs-subvolumegroup-form/
 import { CephfsSubvolumeSnapshotsListComponent } from './cephfs-subvolume-snapshots-list/cephfs-subvolume-snapshots-list.component';
 import { CephfsSnapshotscheduleListComponent } from './cephfs-snapshotschedule-list/cephfs-snapshotschedule-list.component';
 import { DataTableModule } from '../../shared/datatable/datatable.module';
+import { CephfsSubvolumeSnapshotsFormComponent } from './cephfs-subvolume-snapshots-list/cephfs-subvolume-snapshots-form/cephfs-subvolume-snapshots-form.component';
+import { CephfsSnapshotscheduleFormComponent } from './cephfs-snapshotschedule-form/cephfs-snapshotschedule-form.component';
+import { CephfsMountDetailsComponent } from './cephfs-mount-details/cephfs-mount-details.component';
 
 @NgModule({
   imports: [
     CommonModule,
     SharedModule,
     AppRoutingModule,
-    ChartsModule,
+    NgChartsModule,
     TreeModule,
     NgbNavModule,
     FormsModule,
     ReactiveFormsModule,
     NgbTypeaheadModule,
     NgbTooltipModule,
-    DataTableModule
+    DataTableModule,
+    NgbDatepickerModule,
+    NgbTimepickerModule,
+    NgbTypeaheadModule
   ],
   declarations: [
     CephfsDetailComponent,
@@ -51,7 +63,10 @@ import { DataTableModule } from '../../shared/datatable/datatable.module';
     CephfsSubvolumeGroupComponent,
     CephfsSubvolumegroupFormComponent,
     CephfsSubvolumeSnapshotsListComponent,
-    CephfsSnapshotscheduleListComponent
+    CephfsSnapshotscheduleListComponent,
+    CephfsSnapshotscheduleFormComponent,
+    CephfsSubvolumeSnapshotsFormComponent,
+    CephfsMountDetailsComponent
   ]
 })
 export class CephfsModule {}

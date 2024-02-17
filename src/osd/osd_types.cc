@@ -1376,7 +1376,9 @@ static opt_mapping_t opt_mapping = boost::assign::map_list_of
            ("dedup_cdc_chunk_size", pool_opts_t::opt_desc_t(
 	     pool_opts_t::DEDUP_CDC_CHUNK_SIZE, pool_opts_t::INT))
 	   ("pg_num_max", pool_opts_t::opt_desc_t(
-             pool_opts_t::PG_NUM_MAX, pool_opts_t::INT));
+             pool_opts_t::PG_NUM_MAX, pool_opts_t::INT))
+	   ("read_ratio", pool_opts_t::opt_desc_t(
+             pool_opts_t::READ_RATIO, pool_opts_t::INT));
 
 bool pool_opts_t::is_opt_name(const std::string& name)
 {
@@ -1760,19 +1762,13 @@ void pg_pool_t::remove_snap(snapid_t s)
 {
   ceph_assert(snaps.count(s));
   snaps.erase(s);
-  snap_seq = snap_seq + 1;
 }
 
 void pg_pool_t::remove_unmanaged_snap(snapid_t s, bool preoctopus_compat)
 {
   ceph_assert(is_unmanaged_snaps_mode());
-  ++snap_seq;
   if (preoctopus_compat) {
     removed_snaps.insert(s);
-    // try to add in the new seq, just to try to keep the interval_set contiguous
-    if (!removed_snaps.contains(get_snap_seq())) {
-      removed_snaps.insert(get_snap_seq());
-    }
   }
 }
 
@@ -7154,8 +7150,16 @@ void ScrubMap::object::generate_test_instances(list<object*>& o)
   o.back()->negative = true;
   o.push_back(new object);
   o.back()->size = 123;
-  o.back()->attrs["foo"] = ceph::buffer::copy("foo", 3);
-  o.back()->attrs["bar"] = ceph::buffer::copy("barval", 6);
+  {
+    bufferlist foobl;
+    foobl.push_back(ceph::buffer::copy("foo", 3));
+    o.back()->attrs["foo"] = std::move(foobl);
+  }
+  {
+    bufferlist barbl;
+    barbl.push_back(ceph::buffer::copy("barval", 6));
+    o.back()->attrs["bar"] = std::move(barbl);
+  }
 }
 
 // -- OSDOp --

@@ -847,6 +847,7 @@ void OSDMonitor::update_from_paxos(bool *need_bootstrap)
 
     bufferlist orig_full_bl;
     get_version_full(osdmap.epoch, orig_full_bl);
+    dout(20) << __func__ << " mon is running version: " << ceph_version_to_str() << dendl;
     if (orig_full_bl.length()) {
       // the primary provided the full map
       ceph_assert(inc.have_crc);
@@ -857,8 +858,12 @@ void OSDMonitor::update_from_paxos(bool *need_bootstrap)
 	// sync with the primary for this and all future maps.  OSDs
 	// will also be brought back into sync when they discover the
 	// crc mismatch and request a full map from a mon.
-	derr << __func__ << " full map CRC mismatch, resetting to canonical"
-	     << dendl;
+	derr << __func__ << " full map CRC mismatch,"
+    << " might be because mons are running mixed versions ..."
+    << " resetting to canonical" << dendl;
+
+  dout(20) << __func__ << " canonical crc: " << inc.full_crc
+    << " my crc: " << osdmap.crc << dendl;
 
 	dout(20) << __func__ << " my (bad) full osdmap:\n";
 	JSONFormatter jf(true);
@@ -1162,7 +1167,6 @@ void OSDMonitor::create_pending()
   pending_inc.fsid = mon.monmap->fsid;
   pending_metadata.clear();
   pending_metadata_rm.clear();
-  pending_pseudo_purged_snaps.clear();
 
   dout(10) << "create_pending e " << pending_inc.epoch << dendl;
 
@@ -2024,6 +2028,8 @@ void OSDMonitor::encode_pending(MonitorDBStore::TransactionRef t)
   bufferlist bl;
   encode(pending_inc, bl, features | CEPH_FEATURE_RESERVED);
 
+  dout(20) << __func__ << " mon is running version: "
+    << ceph_version_to_str() << dendl;
   dout(20) << " full_crc " << tmp.get_crc()
 	   << " inc_crc " << pending_inc.inc_crc << dendl;
 
@@ -2062,13 +2068,6 @@ void OSDMonitor::encode_pending(MonitorDBStore::TransactionRef t)
 	 q != i.second.end();
 	 ++q) {
       insert_purged_snap_update(i.first, q.get_start(), q.get_end(),
-				pending_inc.epoch,
-				t);
-    }
-  }
-  for (auto& [pool, snaps] : pending_pseudo_purged_snaps) {
-    for (auto snap : snaps) {
-      insert_purged_snap_update(pool, snap, snap + 1,
 				pending_inc.epoch,
 				t);
     }
@@ -3518,7 +3517,7 @@ bool OSDMonitor::preprocess_boot(MonOpRequestRef op)
       if (!osdmap.get_allow_crimson()) {
 	mon.clog->info()
 	  << "Disallowing boot of crimson-osd without allow_crimson "
-	  << "OSDMap flag.  Run ceph osd set_allow_crimson to set "
+	  << "OSDMap flag.  Run ceph osd set-allow-crimson to set "
 	  << "allow_crimson flag.  Note that crimson-osd is "
 	  << "considered unstable and may result in crashes or "
 	  << "data loss.  Its usage should be restricted to "
@@ -5399,7 +5398,7 @@ namespace {
     CSUM_TYPE, CSUM_MAX_BLOCK, CSUM_MIN_BLOCK, FINGERPRINT_ALGORITHM,
     PG_AUTOSCALE_MODE, PG_NUM_MIN, TARGET_SIZE_BYTES, TARGET_SIZE_RATIO,
     PG_AUTOSCALE_BIAS, DEDUP_TIER, DEDUP_CHUNK_ALGORITHM, 
-    DEDUP_CDC_CHUNK_SIZE, POOL_EIO, BULK, PG_NUM_MAX };
+    DEDUP_CDC_CHUNK_SIZE, POOL_EIO, BULK, PG_NUM_MAX, READ_RATIO };
 
   std::set<osd_pool_get_choices>
     subtract_second_from_first(const std::set<osd_pool_get_choices>& first,
@@ -6149,7 +6148,8 @@ bool OSDMonitor::preprocess_command(MonOpRequestRef op)
       {"dedup_tier", DEDUP_TIER},
       {"dedup_chunk_algorithm", DEDUP_CHUNK_ALGORITHM},
       {"dedup_cdc_chunk_size", DEDUP_CDC_CHUNK_SIZE},
-      {"bulk", BULK}
+      {"bulk", BULK},
+      {"read_ratio", READ_RATIO}
     };
 
     typedef std::set<osd_pool_get_choices> choices_set_t;
@@ -6165,6 +6165,9 @@ bool OSDMonitor::preprocess_command(MonOpRequestRef op)
     };
     const choices_set_t ONLY_ERASURE_CHOICES = {
       EC_OVERWRITES, ERASURE_CODE_PROFILE
+    };
+    const choices_set_t ONLY_REPLICA_CHOICES = {
+      READ_RATIO
     };
 
     choices_set_t selected_choices;
@@ -6182,6 +6185,10 @@ bool OSDMonitor::preprocess_command(MonOpRequestRef op)
       if(!p->is_erasure()) {
 	selected_choices = subtract_second_from_first(selected_choices,
 						      ONLY_ERASURE_CHOICES);
+      }
+      if(!p->is_replicated()) {
+        selected_choices = subtract_second_from_first(selected_choices,
+						      ONLY_REPLICA_CHOICES);
       }
     } else /* var != "all" */  {
       choices_map_t::const_iterator found = ALL_CHOICES.find(var);
@@ -6207,6 +6214,15 @@ bool OSDMonitor::preprocess_command(MonOpRequestRef op)
 	  != ONLY_ERASURE_CHOICES.end()) {
 	ss << "pool '" << poolstr
 	   << "' is not a erasure pool: variable not applicable";
+	r = -EACCES;
+	goto reply;
+      }
+
+      if (!p->is_replicated() &&
+	  ONLY_REPLICA_CHOICES.find(selected)
+	  != ONLY_REPLICA_CHOICES.end()) {
+	ss << "pool '" << poolstr
+	   << "' is not a replicated pool: variable not applicable";
 	r = -EACCES;
 	goto reply;
       }
@@ -6379,6 +6395,7 @@ bool OSDMonitor::preprocess_command(MonOpRequestRef op)
 	  case DEDUP_TIER:
 	  case DEDUP_CHUNK_ALGORITHM:
 	  case DEDUP_CDC_CHUNK_SIZE:
+          case READ_RATIO:
             pool_opts_t::key_t key = pool_opts_t::get_opt_desc(i->first).key;
             if (p->opts.is_set(key)) {
               if(*it == CSUM_TYPE) {
@@ -6542,6 +6559,7 @@ bool OSDMonitor::preprocess_command(MonOpRequestRef op)
 	  case DEDUP_TIER:
 	  case DEDUP_CHUNK_ALGORITHM:
 	  case DEDUP_CDC_CHUNK_SIZE:
+          case READ_RATIO:
 	    for (i = ALL_CHOICES.begin(); i != ALL_CHOICES.end(); ++i) {
 	      if (i->second == *it)
 		break;
@@ -8014,10 +8032,7 @@ int OSDMonitor::prepare_new_pool(string& name,
     /* crimson-osd requires that the pool be replicated and that pg_num/pgp_num
      * be static.  User must also have specified set-allow-crimson */
     const auto *suffix = " (--crimson specified or osd_pool_default_crimson set)";
-    if (pool_type != pg_pool_t::TYPE_REPLICATED) {
-      *ss << "crimson-osd only supports replicated pools" << suffix;
-      return -EINVAL;
-    } else if (pg_autoscale_mode != "off") {
+    if (pg_autoscale_mode != "off") {
       *ss << "crimson-osd does not support changing pg_num or pgp_num, "
 	  << "pg_autoscale_mode must be set to 'off'" << suffix;
       return -EINVAL;
@@ -8073,7 +8088,7 @@ int OSDMonitor::prepare_new_pool(string& name,
     return r;
   }
 
-  if (osdmap.crush->get_rule_type(crush_rule) != (int)pool_type) {
+  if (!osdmap.crush->rule_valid_for_pool_type(crush_rule, pool_type)) {
     *ss << "crush rule " << crush_rule << " type does not match pool";
     return -EINVAL;
   }
@@ -8315,6 +8330,11 @@ int OSDMonitor::prepare_command_pool_set(const cmdmap_t& cmdmap,
     return -EACCES;
   }
 
+  if (!p.is_replicated() &&
+      (var == "read_ratio")) {
+    return -EACCES;
+  }
+
   if (var == "size") {
     if (p.has_flag(pg_pool_t::FLAG_NOSIZECHANGE)) {
       ss << "pool size change is disabled; you must unset nosizechange flag for the pool first";
@@ -8345,7 +8365,7 @@ int OSDMonitor::prepare_command_pool_set(const cmdmap_t& cmdmap,
 	return -EPERM;
       }
     }
-    if (osdmap.crush->get_rule_type(p.get_crush_rule()) != (int)p.type) {
+    if (!osdmap.crush->rule_valid_for_pool_type(p.get_crush_rule(), p.type)) {
       ss << "crush rule " << p.get_crush_rule() << " type does not match pool";
       return -EINVAL;
     }
@@ -8578,7 +8598,7 @@ int OSDMonitor::prepare_command_pool_set(const cmdmap_t& cmdmap,
       ss << cpp_strerror(id);
       return -ENOENT;
     }
-    if (osdmap.crush->get_rule_type(id) != (int)p.get_type()) {
+    if (!osdmap.crush->rule_valid_for_pool_type(id, p.get_type())) {
       ss << "crush rule " << id << " type does not match pool";
       return -EINVAL;
     }
@@ -8948,6 +8968,15 @@ int OSDMonitor::prepare_command_pool_set(const cmdmap_t& cmdmap,
       if (interr.length()) {
         ss << "error parsing int value '" << val << "': " << interr;
         return -EINVAL;
+      }
+    } else if (var == "read_ratio") {
+      if (interr.length()) {
+        ss << "error parsing int value '" << val << "': " << interr;
+        return -EINVAL;
+      }
+      if (n < 0 || n > 100) {
+        ss << "read_ratio must be between 0 and 100";
+        return -ERANGE;
       }
     }
 
@@ -14303,10 +14332,6 @@ bool OSDMonitor::prepare_pool_op(MonOpRequestRef op)
 	m->snapid,
 	osdmap.require_osd_release < ceph_release_t::octopus);
       pending_inc.new_removed_snaps[m->pool].insert(m->snapid);
-      // also record the new seq as purged: this avoids a discontinuity
-      // after all of the snaps have been purged, since the seq assigned
-      // during removal lives in the same namespace as the actual snaps.
-      pending_pseudo_purged_snaps[m->pool].insert(pp.get_snap_seq());
       changed = true;
     }
     break;

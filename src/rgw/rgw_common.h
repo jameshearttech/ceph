@@ -306,6 +306,7 @@ static inline const char* to_mime_type(const RGWFormat f)
 #define ERR_OBJECT_NOT_APPENDABLE                        2220
 #define ERR_INVALID_BUCKET_STATE                         2221
 #define ERR_INVALID_OBJECT_STATE			 2222
+#define ERR_PRESIGNED_URL_EXPIRED			 2223
 
 #define ERR_BUSY_RESHARDING      2300
 #define ERR_NO_SUCH_ENTITY       2301
@@ -445,8 +446,10 @@ public:
   }
 };
 
+using env_map_t = std::map<std::string, std::string, ltstr_nocase>;
+
 class RGWEnv {
-  std::map<std::string, std::string, ltstr_nocase> env_map;
+  env_map_t env_map;
   RGWConf conf;
 public:
   void init(CephContext *cct);
@@ -1767,7 +1770,7 @@ static constexpr uint32_t MATCH_POLICY_RESOURCE = 0x02;
 static constexpr uint32_t MATCH_POLICY_ARN = 0x04;
 static constexpr uint32_t MATCH_POLICY_STRING = 0x08;
 
-extern bool match_policy(std::string_view pattern, std::string_view input,
+extern bool match_policy(const std::string& pattern, const std::string& input,
                          uint32_t flag);
 
 extern std::string camelcase_dash_http_attr(const std::string& orig, bool convert2dash = true);
@@ -1824,13 +1827,14 @@ static inline ssize_t rgw_unescape_str(const std::string& s, ssize_t ofs,
   return std::string::npos;
 }
 
-static inline std::string rgw_bl_str(ceph::buffer::list& raw)
+/// Return a string copy of the given bufferlist with trailing nulls removed
+static inline std::string rgw_bl_str(const ceph::buffer::list& bl)
 {
-  size_t len = raw.length();
-  std::string s(raw.c_str(), len);
-  while (len && !s[len - 1]) {
-    --len;
-    s.resize(len);
+  // use to_str() instead of c_str() so we don't reallocate a flat bufferlist
+  std::string s = bl.to_str();
+  // with to_str(), the result may include null characters. trim trailing nulls
+  while (!s.empty() && s.back() == '\0') {
+    s.pop_back();
   }
   return s;
 }
@@ -1846,6 +1850,18 @@ int decode_bl(bufferlist& bl, T& t)
   }
   return 0;
 }
+
+static inline std::string ys_header_mangle(std::string_view name)
+{
+  /* can we please stop doing this? */
+  std::string out;
+  out.reserve(name.length());
+  std::transform(std::begin(name), std::end(name),
+		 std::back_inserter(out), [](const int c) {
+		   return c == '-' ? '_' : c == '_' ? '-' : std::toupper(c);
+		 });
+  return out;
+} /* ys_header_mangle */
 
 extern int rgw_bucket_parse_bucket_instance(const std::string& bucket_instance, std::string *bucket_name, std::string *bucket_id, int *shard_id);
 

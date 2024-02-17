@@ -485,7 +485,6 @@ public:
   int preadv(int fd, const struct iovec *iov, int iovcnt, loff_t offset=-1);
   int write(int fd, const char *buf, loff_t size, loff_t offset=-1);
   int pwritev(int fd, const struct iovec *iov, int iovcnt, loff_t offset=-1);
-  int fake_write_size(int fd, loff_t size);
   int ftruncate(int fd, loff_t size, const UserPerm& perms);
   int fsync(int fd, bool syncdataonly);
   int fstat(int fd, struct stat *stbuf, const UserPerm& perms,
@@ -1678,12 +1677,12 @@ private:
           const struct iovec *iov, int iovcnt, Context *onfinish = nullptr,
           bool do_fsync = false, bool syncdataonly = false);
   int64_t _preadv_pwritev_locked(Fh *fh, const struct iovec *iov,
-                                 unsigned iovcnt, int64_t offset,
+                                 int iovcnt, int64_t offset,
                                  bool write, bool clamp_to_int,
                                  Context *onfinish = nullptr,
                                  bufferlist *blp = nullptr,
                                  bool do_fsync = false, bool syncdataonly = false);
-  int _preadv_pwritev(int fd, const struct iovec *iov, unsigned iovcnt,
+  int _preadv_pwritev(int fd, const struct iovec *iov, int iovcnt,
                       int64_t offset, bool write, Context *onfinish = nullptr,
                       bufferlist *blp = nullptr);
   int _flush(Fh *fh);

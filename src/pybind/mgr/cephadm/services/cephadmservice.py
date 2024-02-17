@@ -42,7 +42,7 @@ def get_auth_entity(daemon_type: str, daemon_id: str, host: str = "") -> AuthEnt
     # the CephService class refers to service types, not daemon types
     if daemon_type in ['rgw', 'rbd-mirror', 'cephfs-mirror', 'nfs', "iscsi", 'nvmeof', 'ingress', 'ceph-exporter']:
         return AuthEntity(f'client.{daemon_type}.{daemon_id}')
-    elif daemon_type in ['crash', 'agent']:
+    elif daemon_type in ['crash', 'agent', 'node-proxy']:
         if host == "":
             raise OrchestratorError(
                 f'Host not provided to generate <{daemon_type}> auth entity name')
@@ -1022,13 +1022,45 @@ class RgwService(CephService):
             args.extend(spec.rgw_frontend_extra_args)
 
         frontend = f'{ftype} {" ".join(args)}'
+        daemon_name = utils.name_to_config_section(daemon_spec.name())
 
         ret, out, err = self.mgr.check_mon_command({
             'prefix': 'config set',
-            'who': utils.name_to_config_section(daemon_spec.name()),
+            'who': daemon_name,
             'name': 'rgw_frontends',
             'value': frontend
         })
+
+        if spec.rgw_user_counters_cache:
+            ret, out, err = self.mgr.check_mon_command({
+                'prefix': 'config set',
+                'who': daemon_name,
+                'name': 'rgw_user_counters_cache',
+                'value': 'true',
+            })
+        if spec.rgw_bucket_counters_cache:
+            ret, out, err = self.mgr.check_mon_command({
+                'prefix': 'config set',
+                'who': daemon_name,
+                'name': 'rgw_bucket_counters_cache',
+                'value': 'true',
+            })
+
+        if spec.rgw_user_counters_cache_size:
+            ret, out, err = self.mgr.check_mon_command({
+                'prefix': 'config set',
+                'who': daemon_name,
+                'name': 'rgw_user_counters_cache_size',
+                'value': str(spec.rgw_user_counters_cache_size),
+            })
+
+        if spec.rgw_bucket_counters_cache_size:
+            ret, out, err = self.mgr.check_mon_command({
+                'prefix': 'config set',
+                'who': daemon_name,
+                'name': 'rgw_bucket_counters_cache_size',
+                'value': str(spec.rgw_bucket_counters_cache_size),
+            })
 
         daemon_spec.keyring = keyring
         daemon_spec.final_config, daemon_spec.deps = self.generate_config(daemon_spec)

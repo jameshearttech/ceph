@@ -40,7 +40,7 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger(__name__)
 
-REQUIRES_POST_ACTIONS = ['grafana', 'iscsi', 'prometheus', 'alertmanager', 'rgw']
+REQUIRES_POST_ACTIONS = ['grafana', 'iscsi', 'prometheus', 'alertmanager', 'rgw', 'nvmeof']
 
 
 class CephadmServe:
@@ -113,8 +113,14 @@ class CephadmServe:
                     if self.mgr.agent_helpers._handle_use_agent_setting():
                         continue
 
+                    if self.mgr.node_proxy_service.handle_hw_monitoring_setting():
+                        continue
+
                     if self.mgr.upgrade.continue_upgrade():
                         continue
+
+                    # refresh node-proxy cache
+                    self.mgr.node_proxy_cache.load()
 
             except OrchestratorError as e:
                 if e.event_subject:
@@ -881,6 +887,13 @@ class CephadmServe:
                         progress_done += 1
                         hosts_altered.add(d.hostname)
                         break
+
+                # do not attempt to deploy node-proxy agent when oob details are not provided.
+                if slot.daemon_type == 'node-proxy' and slot.hostname not in self.mgr.node_proxy_cache.oob.keys():
+                    self.log.debug(
+                        f'Not deploying node-proxy agent on {slot.hostname} as oob details are not present.'
+                    )
+                    continue
 
                 # deploy new daemon
                 daemon_id = slot.name
